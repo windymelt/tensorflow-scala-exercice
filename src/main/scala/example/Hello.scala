@@ -1,6 +1,7 @@
 package example
 
 import org.platanios.tensorflow
+import java.nio.file.Paths
 
 object Hello extends App with TF {
   import tensorflow.api.tensors.Tensor
@@ -89,18 +90,27 @@ trait TF {
 
     val layer = Linear[Float]("inputLinear", 2, useBias = true) >> ReLU[Float]("hidden ReLU") >> Linear[Float]("outputLinear", 1)
 
-    val loss = L2Loss[Float, Float]("l2loss") >> Mean("loss/mean") // 本当はMSEが欲しいんだけど・・・
+    val loss = L2Loss[Float, Float]("l2loss") >> Mean("loss/mean") >> ScalarSummary(name = "Loss", tag = "Loss") // 本当はMSEが欲しいんだけど・・・
 
-    val optimizer = tensorflow.api.ops.training.optimizers.GradientDescent(0.01f)
+    val optimizer = tensorflow.api.ops.training.optimizers.AdaGrad(0.01f)
 
     val model = Model.simpleSupervised(input, trainInput, layer, loss, optimizer)
 
-    val estimator = tensorflow.api.learn.estimators.InMemoryEstimator(model)
+    val summariesDir = Paths.get("/tmp/summaries")
+    val estimator = tensorflow.api.learn.estimators.InMemoryEstimator(
+      model,
+      configurationBase = tensorflow.api.learn.Configuration(Some(summariesDir)),
+      trainHooks = Set(
+        tensorflow.api.learn.hooks.SummarySaver(summariesDir, tensorflow.api.learn.hooks.StepHookTrigger(100)),
+        tensorflow.api.learn.hooks.CheckpointSaver(summariesDir, tensorflow.api.learn.hooks.StepHookTrigger(1000))
+      ),
+      tensorBoardConfig = tensorflow.api.config.TensorBoardConfig(summariesDir),
+    )
 
     val trainDataSet = tensorflow.api.ops.data.Data.datasetFromTensors(trainDS)
     val trainLabelsDataSet = tensorflow.api.ops.data.Data.datasetFromTensors(trainLabels)
     val trainData = trainDataSet.zip(trainLabelsDataSet).repeat().shuffle(10000).prefetch(10)
-    estimator.train(() => trainData, tensorflow.api.learn.StopCriteria(maxSteps = Some(1000000L)))
+    estimator.train(() => trainData, tensorflow.api.learn.StopCriteria(maxSteps = Some(500000L)))
 
   }
 }
