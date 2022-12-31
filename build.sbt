@@ -11,6 +11,7 @@ lazy val root = (project in file("."))
     libraryDependencies += scalaTest % Test,
     libraryDependencies ++= Seq(
       "org.platanios" %% "tensorflow" % "0.6.5" classifier "linux",
+      "org.platanios" %% "tensorflow-data" % "0.6.5",
     ),
   )
 
