@@ -21,7 +21,8 @@ object Hello extends App with TF {
 
   sess
 
-  learn
+  //learn
+  rabbit
 }
 
 trait TF {
@@ -112,5 +113,73 @@ trait TF {
     val trainData = trainDataSet.zip(trainLabelsDataSet).repeat().shuffle(10000).prefetch(10)
     estimator.train(() => trainData, tensorflow.api.learn.StopCriteria(maxSteps = Some(500000L)))
 
+  }
+
+  def rabbit: Unit = {
+    // ウサギ検出器
+    // CIFAR-100の65(ウサギ)を使ってウサギを判定できるようにする
+    import tensorflow.data.image.CIFARLoader
+    val dataSet = CIFARLoader.load(Paths.get("/home/windymelt/Downloads/cifar-100-python"), CIFARLoader.CIFAR_100)
+
+    import tensorflow.api.ops.data.Data
+    import tensorflow.api.::
+    val trainImages = () => Data.datasetFromTensorSlices(dataSet.trainImages, "TrainImages").map(_.toFloat)
+
+    // super-categoryは捨ててcategoryだけ得るために(::, 1)で変形する
+    val trainLabels = () => Data.datasetFromTensorSlices(dataSet.trainLabels(::, 1), "TrainLabels").map(_.toLong)
+    val trainData = () => trainImages().zip(trainLabels())
+      .repeat()
+      .shuffle(10000)
+      .batch(32)
+      .prefetch(10)
+
+    import tensorflow.api._
+    import tensorflow.api.learn.layers._
+    val input = Input(
+      FLOAT32,
+      Shape(-1, dataSet.trainImages.shape(1), dataSet.trainImages.shape(2), dataSet.trainImages.shape(3))
+    )
+    val trainInput = Input(INT64, Shape(-1))
+
+    import tensorflow.api.ops.NN.SameConvPadding
+    val layer = Conv2D[Float]("Layer_0/Conv2D", Shape(2, 2, 3, 16), 1, 1, SameConvPadding) >>
+        AddBias[Float]("Layer_0/Bias") >>
+        ReLU[Float]("Layer_0/ReLU", 0.1f) >>
+        MaxPool[Float]("Layer_0/MaxPool", Seq(1, 2, 2, 1), 1, 1, SameConvPadding) >>
+        Conv2D[Float]("Layer_1/Conv2D", Shape(2, 2, 16, 32), 1, 1, SameConvPadding) >>
+        AddBias[Float]("Bias_1") >>
+        ReLU[Float]("Layer_1/ReLU", 0.1f) >>
+        MaxPool[Float]("Layer_1/MaxPool", Seq(1, 2, 2, 1), 1, 1, SameConvPadding) >>
+        Flatten[Float]("Layer_2/Flatten") >>
+        Linear[Float]("Layer_2/Linear", 256) >>
+        ReLU[Float]("Layer_2/ReLU", 0.1f) >>
+    Linear[Float]("OutputLayer/Linear", 100)
+
+    val loss = SparseSoftmaxCrossEntropy[Float, Long, Float]("Loss/CrossEntropy") >>
+    Mean[Float]("Loss/Mean") >>
+    ScalarSummary[Float]("Loss/Summary", "Loss")
+
+    val optimizer = tf.train.AdaGrad(0.1f)
+
+    val model = tf.learn.Model.simpleSupervised(
+      input = input,
+      trainInput = trainInput,
+      layer = layer,
+      loss = loss,
+      optimizer = optimizer)
+
+    val summariesDir = Paths.get("temp/cnn-cifar")
+
+    val estimator = tensorflow.api.learn.estimators.InMemoryEstimator(
+      model,
+      tensorflow.api.learn.Configuration(Some(summariesDir)),
+      tensorflow.api.learn.StopCriteria(maxSteps = Some(100000)),
+      Set(
+        tensorflow.api.learn.hooks.LossLogger(trigger = tf.learn.StepHookTrigger(100)),
+        tensorflow.api.learn.hooks.StepRateLogger(log = false, summaryDir = summariesDir, trigger = tensorflow.api.learn.hooks.StepHookTrigger(100)),
+        tensorflow.api.learn.hooks.CheckpointSaver(summariesDir, tensorflow.api.learn.hooks.StepHookTrigger(1000))),
+      tensorBoardConfig = tensorflow.api.config.TensorBoardConfig(summariesDir, reloadInterval = 1))
+
+    estimator.train(trainData, tensorflow.api.learn.StopCriteria(maxSteps = Some(1000)))
   }
 }
